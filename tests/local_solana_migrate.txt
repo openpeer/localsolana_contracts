@@ -1,0 +1,205 @@
+import { LocalSolanaMigrate } from "../target/types/local_solana_migrate";
+import * as anchor from "@coral-xyz/anchor";
+import { Program, AnchorProvider, web3, BN } from "@coral-xyz/anchor";
+import { TOKEN_PROGRAM_ID,createMint, getOrCreateAssociatedTokenAccount, mintTo, getAccount } from "@solana/spl-token";
+import { PublicKey, SystemProgram, Keypair } from "@solana/web3.js";
+import { expect } from "chai";
+import { ShyftSdk, Network } from '@shyft-to/js';
+
+describe("local_solana_migrate", () => {
+  const provider = AnchorProvider.local();
+  anchor.setProvider(provider);
+
+  const program = anchor.workspace
+    .LocalSolanaMigrate as Program<LocalSolanaMigrate>;
+
+  let seller: Keypair;
+  let buyer: Keypair;
+  let feePayer: Keypair;
+  let escrowPda: PublicKey;
+  let escrowStatePda: PublicKey;
+  let bump: number;
+  const orderId = "12345";
+
+  let mint = null;
+  let sellerTokenAccount = null;
+  let buyerTokenAccount = null;
+  let escrowTokenAccount = null;
+  const shyft = new ShyftSdk({ apiKey: 'JwpOxgz2GUG8VMpA', network: Network.Devnet });
+
+  before(async () => {
+    seller = Keypair.generate();
+    buyer = Keypair.generate();
+    feePayer = Keypair.generate();
+
+    const [escrowStatePda_, escrowStateBump] = PublicKey.findProgramAddressSync(
+      [Buffer.from("escrow_state"), seller.publicKey.toBuffer()],
+      program.programId
+    );
+    escrowStatePda = escrowStatePda_;
+
+    const [escrowPda_, escrowBump] = PublicKey.findProgramAddressSync(
+      [Buffer.from("escrow"), Buffer.from(orderId)],
+      program.programId
+    );
+    escrowPda = escrowPda_;
+    bump = escrowBump;
+
+    console.log("Escrow PDA:: " + escrowPda);
+    console.log("Escrow Bump:: " + escrowBump);
+
+    await provider.connection.confirmTransaction(
+      await provider.connection.requestAirdrop(
+        seller.publicKey,
+        100 * web3.LAMPORTS_PER_SOL
+      ),
+      "confirmed"
+    );
+    // await provider.connection.confirmTransaction(
+    //   await provider.connection.requestAirdrop(
+    //     buyer.publicKey,
+    //     10 * web3.LAMPORTS_PER_SOL
+    //   ),
+    //   "confirmed"
+    // );
+
+    // await provider.connection.confirmTransaction(
+    //   await provider.connection.requestAirdrop(
+    //     feePayer.publicKey,
+    //     100 * web3.LAMPORTS_PER_SOL
+    //   ),
+    //   "confirmed"
+    // );
+  });
+
+  it("Initializes escrow state", async () => {
+    try {
+      await program.rpc.initialize(
+        new BN(50),
+        new BN(1000000),
+        PublicKey.default,
+        {
+          accounts: {
+            seller: seller.publicKey,
+            arbitrator: provider.wallet.publicKey,
+            feeRecipient: provider.wallet.publicKey,
+            deployer: seller.publicKey,
+            escrowState: escrowStatePda,
+            systemProgram: SystemProgram.programId,
+          },
+          signers: [seller],
+        }
+      );
+      console.log("Escrow state initialized");
+      const escrowState = await program.account.escrowState.fetch(
+        escrowStatePda
+      );
+      console.log("Escrow State::"+escrowState.seller);
+      expect(escrowState.seller.toBase58() == seller.publicKey.toBase58());
+    } catch (err) {
+      console.error("Error initializing escrow state:", err);
+      throw err;
+    }
+  });
+
+  it("Creates an escrow for SOL transfer", async () => {
+    try {
+    //  program.methods
+    //     .createEscrowSol(
+    //       orderId,
+    //       new BN(6 * web3.LAMPORTS_PER_SOL),
+    //       new BN(3600)
+    //     )
+    //     .accounts({
+    //       buyer: buyer.publicKey,
+    //       seller: seller.publicKey,
+    //       partner: provider.wallet.publicKey,
+    //     }).signers([seller]).rpc.call;
+
+      const tx = await program.rpc.createEscrowSol(
+        orderId,
+        new BN(6 * web3.LAMPORTS_PER_SOL),
+        new BN(3600),
+        {
+          accounts: {
+            escrowState: escrowStatePda,
+            escrow: escrowPda,
+            seller: seller.publicKey,
+            buyer: buyer.publicKey,
+            systemProgram: SystemProgram.programId,
+            partner: feePayer.publicKey,
+          },
+          signers: [seller],
+        }
+      );
+      
+      const balance = await provider.connection.getBalance(escrowPda);
+      console.log("Escrow created with Escrow:", balance);
+      const escrow = await program.account.escrow.fetch(escrowPda);
+      expect(escrow.amount.toNumber() == 6 * web3.LAMPORTS_PER_SOL);
+      // await program.removeEventListener(listener);
+    } catch (err) {
+      console.error("Error creating escrow:", err);
+      throw err;
+    }
+  });
+
+
+
+  it("Marks escrow as paid", async () => {
+    try {
+     
+      await program.rpc.markAsPaid(orderId, {
+        accounts: {
+          escrow:escrowPda,
+          buyer: buyer.publicKey,
+          seller: seller.publicKey,
+          systemProgram: SystemProgram.programId
+        },
+        signers: [buyer],
+      });
+      const escrow = await program.account.escrow.fetch(escrowPda);
+      expect(escrow.sellerCanCancelAfter.eq(new BN(1)));
+    } catch (err) {
+      console.error("Error marking escrow as paid:", err);
+      if (err.logs) {
+        console.error("Transaction logs:", err.logs);
+      }
+      throw err;
+    }
+  });
+
+  it("Releases funds to buyer", async () => {
+    try {
+      await program.rpc.releaseFunds(orderId, {
+        accounts: {
+          escrowState: escrowStatePda,
+          escrow: escrowPda,
+          seller: seller.publicKey,
+          buyer: buyer.publicKey,
+          feeRecipient:provider.wallet.publicKey,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        },
+        signers: [seller],
+      });
+      console.log("Funds released to buyer");
+    } catch (err) {
+      console.error("Error releasing funds:", err);
+      throw err;
+    }
+  });
+
+  it("Fetches seller account balance", async () => {
+    const balance = await provider.connection.getBalance(seller.publicKey);
+    console.log("Seller balance:", balance);
+    const balance2 = await provider.connection.getBalance(escrowPda);
+    console.log("Escrow Now has balance:", balance2);
+    expect(balance > 0, "Seller should have a positive balance");
+  });
+
+  it("Fetches buyer account balance", async () => {
+    const balance = await provider.connection.getBalance(buyer.publicKey);
+    console.log("Buyer balance:", balance);
+    expect(balance > 0, "Buyer should have a positive balance");
+  });
+});
