@@ -43,9 +43,9 @@ describe("local_solana_migrate", () => {
     network: Network.Devnet,
   });
 
-  const address = "5ma3WQEhs1kimMVqDB8Rc9PceTkEUVkm68A6g6cgxWjJ"; 
-  const addressSeller = "5ma3WQEhs1kimMVqDB8Rc9PceTkEUVkm68A6g6cgxWjJ"; 
-  const addressBuyer = "5ma3WQEhs1kimMVqDB8Rc9PceTkEUVkm68A6g6cgxWjJ"; 
+  const address = ""; 
+  const addressSeller = ""; 
+  const addressBuyer = ""; 
   const feeRecipientandArbitrator = new PublicKey(address);
 
   // Helper function to send transaction using Shyft SDK
@@ -56,7 +56,7 @@ describe("local_solana_migrate", () => {
     const connection = new Connection("https://api.devnet.solana.com");
     const recentBlockhash = await connection.getRecentBlockhash();
     transaction.recentBlockhash = recentBlockhash.blockhash;
-    transaction.feePayer = new PublicKey("2Hu9fgnKUWyxqGwLVLhoUPsG9PJ15YbNxB8boWmCdSqC");
+    transaction.feePayer = new PublicKey("");
    // console.log("FeePayer is "+transaction.feePayer.toBase58());
     
     const serializedTransaction = transaction.serialize();
@@ -77,10 +77,10 @@ describe("local_solana_migrate", () => {
   };
 
   before(async () => {
-    const secretKeySellerString = '4zGPnCww61QZ7jiM3YxVJ4VJ2whg8gyt2yA5K742gwv9BFadrjyDv881mLUFNM458BERxN5uXTXTLYpQneN1AUQU'; 
+    const secretKeySellerString = ''; 
     const secretKeySeller = Uint8Array.from(bs58.decode(secretKeySellerString));
 
-    const secretKeyBuyerString = '3scdQ8KKCWnik1sW5ywLxexqAxMuAK3W8hRPzubbuCjoyt7KarLC8QtKHFEfpvxnXUwmLe3ocFyZjUDfELijzbf8'; 
+    const secretKeyBuyerString = ''; 
     const secretKeyBuyer = Uint8Array.from(bs58.decode(secretKeyBuyerString));
 
     seller = Keypair.fromSecretKey(secretKeySeller);
@@ -204,7 +204,7 @@ describe("local_solana_migrate", () => {
             seller: seller.publicKey,
             buyer: buyer.publicKey,
             systemProgram: SystemProgram.programId,
-            partner: new PublicKey("2Hu9fgnKUWyxqGwLVLhoUPsG9PJ15YbNxB8boWmCdSqC"),
+            partner: new PublicKey(""),
           },
           signers: [seller],
         }
