@@ -8,7 +8,7 @@ skip-lint = false
 local_solana_migrate = "4jrqgyS6Wc7qZL2WsEaxaqUuDxRSZwXaYZ2Mkwqrmp9F"
 
 [programs.devnet]
-local_solana_migrate = "CCuEMUp5dNWkfCwLX6zFr96n2hKs9DbmZ9yxjA1pbjyt"
+local_solana_migrate = "3ZCPySRfFaDPthn5G5en7WzvZd5dtv3XvBR7zjHVRxZh"
 
 [registry]
 url = "https://api.apr.dev"
