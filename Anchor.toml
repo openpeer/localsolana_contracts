@@ -5,17 +5,23 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-local_solana_migrate = "4jrqgyS6Wc7qZL2WsEaxaqUuDxRSZwXaYZ2Mkwqrmp9F"
+local_solana_migrate = "1w3ekpHrruiEJPYKpQH6rQssTRNKCKiqUjfQeJXTTrX"
 
 [programs.devnet]
-local_solana_migrate = "3ZCPySRfFaDPthn5G5en7WzvZd5dtv3XvBR7zjHVRxZh"
+local_solana_migrate = "1w3ekpHrruiEJPYKpQH6rQssTRNKCKiqUjfQeJXTTrX"
+
+[programs.mainnet]
+local_solana_migrate = "1w3ekpHrruiEJPYKpQH6rQssTRNKCKiqUjfQeJXTTrX"
 
 [registry]
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "devnet"
+cluster = "mainnet"
 wallet = "~/.config/solana/id.json"
 
 [scripts]
 test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"
+deploy_devnet = "anchor build && solana program deploy -u devnet -k ~/.config/solana/id.json target/deploy/local_solana_migrate.so"
+deploy_mainnet = "anchor build && solana program deploy -u mainnet-beta -k ~/.config/solana/id.json target/deploy/local_solana_migrate.so"
+upgrade_devnet = "anchor build && anchor upgrade target/deploy/local_solana_migrate.so --program-id 1w3ekpHrruiEJPYKpQH6rQssTRNKCKiqUjfQeJXTTrX"

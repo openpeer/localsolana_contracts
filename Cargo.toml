@@ -5,10 +5,9 @@ members = [
 resolver = "2"
 
 [profile.release]
-overflow-checks = true
-lto = "fat"
-codegen-units = 1
-[profile.release.build-override]
-opt-level = 3
-incremental = false
-codegen-units = 1
+opt-level = "z"          # Optimize for size rather than speed
+lto = true               # Use Link Time Optimization for smaller binaries
+codegen-units = 1        # Reduce to one codegen unit to maximize LTO effectiveness
+panic = "abort"          # Set panic strategy to `abort` to reduce binary size
+incremental = false      # Disable incremental compilation for smaller binary
+overflow-checks = true   # Keep overflow checks as it’s good practice

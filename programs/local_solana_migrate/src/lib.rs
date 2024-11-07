@@ -1,5 +1,5 @@
 use anchor_lang::prelude::*;
-use anchor_lang::solana_program::{ program::invoke, system_instruction };
+use anchor_lang::solana_program::{ program::invoke,program::invoke_signed, system_instruction };
 use anchor_spl::token::{ self, Mint, Token, TokenAccount, Transfer };
 use anchor_spl::associated_token::AssociatedToken;
 use anchor_spl::associated_token::{ create, get_associated_token_address };
@@ -12,12 +12,7 @@ pub mod local_solana_migrate {
 
     pub const DISPUTE_FEE: u64 = 5_000_000;
 
-    pub fn initialize(
-        ctx: Context<Initialize>,
-        fee_bps: u64,
-        dispute_fee: u64,
-        fee_discount_nft: Pubkey
-    ) -> Result<()> {
+    pub fn initialize(ctx: Context<Initialize>, fee_bps: u64) -> Result<()> {
         let escrow_state = &mut ctx.accounts.escrow_state;
         require!(!escrow_state.is_initialized, SolanaErrorCode::AlreadyInitialized);
         escrow_state.is_initialized = true;
@@ -25,9 +20,6 @@ pub mod local_solana_migrate {
         escrow_state.fee_bps = fee_bps;
         escrow_state.arbitrator = *ctx.accounts.arbitrator.key;
         escrow_state.fee_recipient = *ctx.accounts.fee_recipient.key;
-        escrow_state.fee_discount_nft = fee_discount_nft;
-        escrow_state.dispute_fee = dispute_fee;
-        // escrow_state.deployer = *ctx.accounts.deployer.key;
         Ok(())
     }
 
@@ -66,7 +58,6 @@ pub mod local_solana_migrate {
         let seller_info = ctx.accounts.seller.to_account_info();
         let escrow_info = ctx.accounts.escrow.to_account_info();
         let system_program_info = ctx.accounts.system_program.to_account_info();
-        // // amount  = amount+ &ctx.accounts.escrow.open_peer_fee;
         let fee_amount = ctx.accounts.escrow.amount + ctx.accounts.escrow.fee;
         if automatic_escrow {
             //Transfer lamports from seller to escrow account
@@ -110,11 +101,9 @@ pub mod local_solana_migrate {
         escrow_account.token = Pubkey::default();
         escrow_account.seller = *ctx.accounts.seller.key;
         escrow_account.buyer = *ctx.accounts.buyer.key;
-        // // amount  = amount+ &ctx.accounts.escrow.open_peer_fee;
         let fee_amount = ctx.accounts.escrow.amount + ctx.accounts.escrow.fee;
 
         if automatic_escrow {
-            
             **ctx.accounts.escrow_state.to_account_info().try_borrow_mut_lamports()? -= fee_amount;
             **ctx.accounts.escrow.to_account_info().try_borrow_mut_lamports()? += fee_amount;
         }
@@ -154,7 +143,6 @@ pub mod local_solana_migrate {
         escrow_account.token = token;
         escrow_account.seller = *ctx.accounts.seller.key;
         escrow_account.buyer = *ctx.accounts.buyer.key;
-        msg!("Automatic Escrow: {}", automatic_escrow);
         if automatic_escrow {
             if ctx.accounts.escrow_token_account.to_account_info().try_borrow_data()?.is_empty() {
                 msg!(
@@ -247,7 +235,7 @@ pub mod local_solana_migrate {
                     cpi_accounts,
                     seeds
                 );
-                msg!("Sending: {}",amount+escrow_account.fee);
+                msg!("Sending: {}", amount + escrow_account.fee);
                 token::transfer(cpi_ctx, amount + escrow_account.fee)?;
             }
         }
@@ -287,52 +275,44 @@ pub mod local_solana_migrate {
         escrow_account.token = token;
         escrow_account.seller = *ctx.accounts.seller.key;
         escrow_account.buyer = *ctx.accounts.buyer.key;
-        msg!("Automatic Escrow: {}", automatic_escrow);
-            if ctx.accounts.escrow_token_account.to_account_info().try_borrow_data()?.is_empty() {
-                msg!(
-                    "Escrow's token associated token account is not initialized. Initializing it..."
-                );
+        if ctx.accounts.escrow_token_account.to_account_info().try_borrow_data()?.is_empty() {
+            msg!("Escrow's token associated token account is not initialized. Initializing it...");
 
-                // If the token account doesn't exist, create it
-                let cpi_accounts = anchor_spl::associated_token::Create {
-                    payer: ctx.accounts.fee_payer.to_account_info(),
-                    associated_token: ctx.accounts.escrow_token_account.to_account_info(),
-                    authority: escrow_account.to_account_info(),
-                    mint: ctx.accounts.mint_account.to_account_info(),
-                    system_program: ctx.accounts.system_program.to_account_info(),
-                    token_program: ctx.accounts.token_program.to_account_info(),
-                };
-
-                let cpi_program = ctx.accounts.associated_token_program.to_account_info();
-                let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
-
-                create(cpi_ctx)?;
-                msg!("Escrow's USDC associated token account has been successfully initialized.");
-            }
-
-            // Perform the transfer
-            let cpi_accounts = Transfer {
-                from: ctx.accounts.escrow_state_token_account
-                    .as_ref()
-                    .ok_or(SolanaErrorCode::AccountError)?
-                    .to_account_info(),
-                to: ctx.accounts.escrow_token_account.to_account_info(),
-                authority: ctx.accounts.escrow_state.to_account_info(),
+            // If the token account doesn't exist, create it
+            let cpi_accounts = anchor_spl::associated_token::Create {
+                payer: ctx.accounts.fee_payer.to_account_info(),
+                associated_token: ctx.accounts.escrow_token_account.to_account_info(),
+                authority: escrow_account.to_account_info(),
+                mint: ctx.accounts.mint_account.to_account_info(),
+                system_program: ctx.accounts.system_program.to_account_info(),
+                token_program: ctx.accounts.token_program.to_account_info(),
             };
-            let seller_key = ctx.accounts.seller.key();
-                let escrow_state_seeds = &[
-                    b"escrow_state",
-                    seller_key.as_ref(),
-                    &[ctx.bumps.escrow_state],
-                ];
-                let seeds: &[&[&[u8]]] = &[escrow_state_seeds];
-                let cpi_ctx = CpiContext::new_with_signer(
-                    ctx.accounts.token_program.to_account_info(),
-                    cpi_accounts,
-                    seeds
-                );
-                msg!("Sending: {}",amount+escrow_account.fee);
-                token::transfer(cpi_ctx, amount + escrow_account.fee)?;
+
+            let cpi_program = ctx.accounts.associated_token_program.to_account_info();
+            let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
+
+            create(cpi_ctx)?;
+            msg!("Escrow's USDC associated token account has been successfully initialized.");
+        }
+
+        // Perform the transfer
+        let cpi_accounts = Transfer {
+            from: ctx.accounts.escrow_state_token_account
+                .as_ref()
+                .ok_or(SolanaErrorCode::AccountError)?
+                .to_account_info(),
+            to: ctx.accounts.escrow_token_account.to_account_info(),
+            authority: ctx.accounts.escrow_state.to_account_info(),
+        };
+        let seller_key = ctx.accounts.seller.key();
+        let escrow_state_seeds = &[b"escrow_state", seller_key.as_ref(), &[ctx.bumps.escrow_state]];
+        let seeds: &[&[&[u8]]] = &[escrow_state_seeds];
+        let cpi_ctx = CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            cpi_accounts,
+            seeds
+        );
+        token::transfer(cpi_ctx, amount + escrow_account.fee)?;
 
         emit!(EscrowCreated { order_id });
         Ok(())
@@ -371,29 +351,10 @@ pub mod local_solana_migrate {
             SolanaErrorCode::InvalidBuyer
         );
 
+        require!(!ctx.accounts.escrow.dispute, SolanaErrorCode::Disputed);
+
         if ctx.accounts.escrow.token == Pubkey::default() {
             let fee_amount = ctx.accounts.escrow.fee;
-            let total_amount = ctx.accounts.escrow.amount + fee_amount;
-            let account_size: usize = ctx.accounts.escrow.to_account_info().data_len();
-
-            // Fetch the rent sysvar
-            let rent = Rent::get()?;
-
-            // Calculate the rent-exempt reserve for this account
-            let rent_exempt_balance = rent.minimum_balance(account_size);
-
-            // Get the actual balance in the account
-            let actual_balance = **ctx.accounts.escrow.to_account_info().lamports.borrow();
-
-            // Calculate the total balance (including the rent-exempt amount)
-            let total_balance = actual_balance + rent_exempt_balance;
-            msg!("Fee Amount:{}", fee_amount);
-            msg!("Escrow Lamports: {}", total_balance);
-            msg!("Total Amount: {}", total_amount);
-
-            // Check if escrow account has enough lamports
-            //require!(total_balance >= total_amount, SolanaErrorCode::InsufficientFunds);
-
             **ctx.accounts.buyer.to_account_info().try_borrow_mut_lamports()? +=
                 ctx.accounts.escrow.amount;
             **ctx.accounts.escrow.to_account_info().try_borrow_mut_lamports()? -=
@@ -401,13 +362,38 @@ pub mod local_solana_migrate {
             **ctx.accounts.fee_recipient.to_account_info().try_borrow_mut_lamports()? += fee_amount;
             **ctx.accounts.escrow.to_account_info().try_borrow_mut_lamports()? -= fee_amount;
         } else {
-            msg!("Amount is : {}", ctx.accounts.escrow.amount);
-            msg!("Fee is : {}", ctx.accounts.escrow.fee);
-            // msg!(
-            //     "Escrow Token Account Balance: {}",
-            //     let escrow_token_account: TokenAccount = TokenAccount::try_from(&ctx.accounts.escrow_token_account.to_account_info())?;
-            //     escrow_token_account.amount;
-            // );
+            if
+                ctx.accounts.buyer_token_account
+                    .as_ref()
+                    .ok_or(SolanaErrorCode::AccountError)?
+                    .to_account_info()
+                    .try_borrow_data()?
+                    .is_empty()
+            {
+                msg!(
+                    "Buyer's token associated token account is not initialized. Initializing it..."
+                );
+
+                // If the token account doesn't exist, create it
+                let cpi_accounts = anchor_spl::associated_token::Create {
+                    payer: ctx.accounts.fee_payer.to_account_info(),
+                    associated_token: ctx.accounts.buyer_token_account
+                        .as_ref()
+                        .ok_or(SolanaErrorCode::AccountError)?
+                        .to_account_info(),
+                    authority: ctx.accounts.buyer.to_account_info(),
+                    mint: ctx.accounts.mint_account.to_account_info(),
+                    system_program: ctx.accounts.system_program.to_account_info(),
+                    token_program: ctx.accounts.token_program.to_account_info(),
+                };
+
+                let cpi_program = ctx.accounts.associated_token_program.to_account_info();
+                let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
+
+                create(cpi_ctx)?;
+                msg!("Buyer's associated token account has been successfully initialized.");
+            }
+
             let (_escrow_pda, _bump) = Pubkey::find_program_address(
                 &[b"escrow", order_id.as_bytes()],
                 ctx.program_id
@@ -465,26 +451,51 @@ pub mod local_solana_migrate {
     pub fn buyer_cancel(ctx: Context<CancelEscrow>, order_id: String) -> Result<()> {
         let escrow = &ctx.accounts.escrow;
         require!(escrow.exists, SolanaErrorCode::EscrowNotFound);
+        require!(
+            ctx.accounts.seller.key() == ctx.accounts.escrow.buyer.key() ||
+                ctx.accounts.seller.key() == ctx.accounts.escrow.seller.key(),
+            SolanaErrorCode::InvalidAuthority
+        );
+
+        if ctx.accounts.seller.key() == ctx.accounts.escrow.seller.key() {
+            require!(
+                escrow.seller_can_cancel_after > 1 &&
+                    escrow.seller_can_cancel_after <= Clock::get()?.unix_timestamp,
+                SolanaErrorCode::CannotCancelYet
+            );
+        }
+
 
         if escrow.token == Pubkey::default() {
-            **ctx.accounts.seller.to_account_info().try_borrow_mut_lamports()? +=
+            **ctx.accounts.escrow_state.to_account_info().try_borrow_mut_lamports()? +=
                 escrow.amount + escrow.fee;
             **ctx.accounts.escrow.to_account_info().try_borrow_mut_lamports()? -=
                 escrow.amount + escrow.fee;
         } else {
-            // if let (Some(seller_token_account), Some(escrow_token_account)) = (
-            //     &ctx.accounts.seller_token_account,
-            //     &ctx.accounts.escrow_token_account,
-            // ) {
+            let (_escrow_pda, _bump) = Pubkey::find_program_address(
+                &[b"escrow", order_id.as_bytes()],
+                ctx.program_id
+            );
             let cpi_accounts = Transfer {
-                from: escrow.to_account_info(),
-                to: ctx.accounts.seller.to_account_info(),
-                authority: ctx.accounts.seller.to_account_info(),
+                from: ctx.accounts.escrow_token_account
+                    .as_ref()
+                    .ok_or(SolanaErrorCode::AccountError)?
+                    .to_account_info(),
+                to: ctx.accounts.escrow_state_token_account
+                .as_ref()
+                .ok_or(SolanaErrorCode::AccountError)?
+                .to_account_info(),
+                authority: escrow.to_account_info(),
             };
+
             let cpi_program = ctx.accounts.token_program.to_account_info();
             let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
-            token::transfer(cpi_ctx, escrow.amount + escrow.fee)?;
-            // }
+
+            // Perform the token transfer (with decimals checked)
+            token::transfer(
+                cpi_ctx.with_signer(&[&[b"escrow", order_id.as_bytes(), &[_bump]]]),
+                escrow.amount + escrow.fee
+            )?;
         }
 
         ctx.accounts.escrow.exists = false;
@@ -492,63 +503,25 @@ pub mod local_solana_migrate {
         Ok(())
     }
 
-    pub fn seller_cancel(ctx: Context<CancelEscrow>, order_id: String) -> Result<()> {
-        let escrow = &mut ctx.accounts.escrow;
-        require!(escrow.exists, SolanaErrorCode::EscrowNotFound);
-        require!(
-            escrow.seller_can_cancel_after > 1 &&
-                escrow.seller_can_cancel_after <= Clock::get()?.unix_timestamp,
-            SolanaErrorCode::CannotCancelYet
-        );
-
-        if escrow.token == Pubkey::default() {
-            **ctx.accounts.seller.to_account_info().try_borrow_mut_lamports()? +=
-                escrow.amount + escrow.fee;
-            **escrow.to_account_info().try_borrow_mut_lamports()? -= escrow.amount + escrow.fee;
-        } else {
-            // if let (Some(seller_token_account), Some(escrow_token_account)) = (
-            //     &ctx.accounts.seller_token_account,
-            //     &ctx.accounts.escrow_token_account,
-            // ) {
-            let cpi_accounts = Transfer {
-                from: escrow.to_account_info(),
-                to: ctx.accounts.seller.to_account_info(),
-                authority: ctx.accounts.seller.to_account_info(),
-            };
-            let cpi_program = ctx.accounts.token_program.to_account_info();
-            let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
-            token::transfer(cpi_ctx, escrow.amount + escrow.fee)?;
-            //}
-        }
-
-        escrow.exists = false;
-        emit!(CancelledBySeller { order_id: order_id });
-        Ok(())
-    }
-
     pub fn open_dispute(ctx: Context<OpenDispute>, order_id: String) -> Result<()> {
-        let escrow_state = &ctx.accounts.escrow_state;
         require!(
-            ctx.accounts.payer.to_account_info().lamports() >= escrow_state.dispute_fee,
+            ctx.accounts.payer.to_account_info().lamports() >= DISPUTE_FEE,
             SolanaErrorCode::InsufficientFundsForDispute
         );
 
         require!(
             ctx.accounts.payer.key() == ctx.accounts.escrow.buyer.key() ||
                 ctx.accounts.payer.key() == ctx.accounts.escrow.seller.key(),
-            SolanaErrorCode::InsufficientFundsForDispute
+            SolanaErrorCode::InvalidAuthority
         );
 
         let escrow = &mut ctx.accounts.escrow;
         require!(escrow.exists, SolanaErrorCode::EscrowNotFound);
         require!(escrow.seller_can_cancel_after == 1, SolanaErrorCode::CannotOpenDisputeYet);
-
-        // Mark the party that opened the dispute
-        if ctx.accounts.payer.key() == escrow.buyer.key() {
-            escrow.buyer_paid_dispute = true;
-        } else if ctx.accounts.payer.key() == escrow.seller.key() {
-            escrow.seller_paid_dispute = true;
-        }
+        require!(
+            escrow.seller == ctx.accounts.payer.key() || escrow.buyer == ctx.accounts.payer.key(),
+            SolanaErrorCode::InvalidBuyer
+        );
 
         // Transfer dispute fee from payer to program
         invoke(
@@ -559,12 +532,18 @@ pub mod local_solana_migrate {
             ),
             &[
                 ctx.accounts.payer.to_account_info(),
-                ctx.accounts.escrow_state.to_account_info(),
+                escrow.to_account_info(),
                 ctx.accounts.system_program.to_account_info(),
             ]
         )?;
 
         escrow.dispute = true;
+        // Mark the party that opened the dispute
+        if ctx.accounts.payer.key() == escrow.buyer.key() {
+            escrow.buyer_paid_dispute = true;
+        } else if ctx.accounts.payer.key() == escrow.seller.key() {
+            escrow.seller_paid_dispute = true;
+        }
         emit!(DisputeOpened {
             order_id: order_id,
             sender: *ctx.accounts.payer.key,
@@ -580,6 +559,10 @@ pub mod local_solana_migrate {
         let escrow = &mut ctx.accounts.escrow;
         require!(escrow.exists, SolanaErrorCode::EscrowNotFound);
         require!(escrow.dispute, SolanaErrorCode::DisputeNotOpen);
+        // require!(
+        //     ctx.accounts.escrow_state.arbitrator.key() == ctx.accounts.arbitrator.key(),
+        //     SolanaErrorCode::InvalidArbitrator
+        // );
         require!(
             winner == ctx.accounts.seller.key() || winner == ctx.accounts.buyer.key(),
             SolanaErrorCode::InvalidWinner
@@ -590,35 +573,27 @@ pub mod local_solana_migrate {
         } else {
             &ctx.accounts.buyer
         };
+        let loser_has_paid = if winner == ctx.accounts.seller.key() {
+            escrow.buyer_paid_dispute
+        } else {
+            escrow.seller_paid_dispute
+        };
         let arbitrator = ctx.accounts.arbitrator.to_account_info();
 
         // Transfer 0.005 SOL from program to winner
-        invoke(
-            &system_instruction::transfer(
-                ctx.accounts.escrow_state.to_account_info().key,
-                &winner_account.key(),
-                DISPUTE_FEE
-            ),
-            &[
-                ctx.accounts.escrow_state.to_account_info(),
-                winner_account.to_account_info(),
-                ctx.accounts.system_program.to_account_info(),
-            ]
-        )?;
+        **winner_account.to_account_info().try_borrow_mut_lamports()? +=
+                DISPUTE_FEE;
+            **escrow.to_account_info().try_borrow_mut_lamports()? -=
+                DISPUTE_FEE;
 
-        // Transfer 0.005 SOL from program to arbitrator
-        invoke(
-            &system_instruction::transfer(
-                ctx.accounts.escrow_state.to_account_info().key,
-                arbitrator.key,
-                DISPUTE_FEE
-            ),
-            &[
-                ctx.accounts.escrow_state.to_account_info(),
-                arbitrator,
-                ctx.accounts.system_program.to_account_info(),
-            ]
-        )?;
+        // Check if the loser has paid for dispute or not. If not then arbitrator will not get anything
+        if loser_has_paid {
+            // Transfer 0.005 SOL from program to arbitrator
+            **arbitrator.try_borrow_mut_lamports()? +=
+                DISPUTE_FEE;
+            **escrow.to_account_info().try_borrow_mut_lamports()? -=
+                DISPUTE_FEE;
+        }
 
         if escrow.token == Pubkey::default() {
             if winner == ctx.accounts.buyer.key() {
@@ -629,18 +604,103 @@ pub mod local_solana_migrate {
             **escrow.to_account_info().try_borrow_mut_lamports()? -= escrow.amount;
         } else {
             let to_account_info = if winner == ctx.accounts.buyer.key() {
-                ctx.accounts.buyer.to_account_info()
+                ctx.accounts.buyer_token_account
+                    .as_ref()
+                    .ok_or(SolanaErrorCode::AccountError)?
+                    .to_account_info()
             } else {
-                ctx.accounts.seller.to_account_info()
+                ctx.accounts.seller_token_account
+                    .as_ref()
+                    .ok_or(SolanaErrorCode::AccountError)?
+                    .to_account_info()
             };
+            let amount_to_transfer = if winner == ctx.accounts.buyer.key() {
+                escrow.amount
+            } else {
+                escrow.amount + escrow.fee
+            };
+
+            let will_fee_transfer = winner == ctx.accounts.buyer.key();
+            let (_escrow_pda, _bump) = Pubkey::find_program_address(
+                &[b"escrow", order_id.as_bytes()],
+                ctx.program_id
+            );
+
+            if will_fee_transfer {
+                if
+                    ctx.accounts.buyer_token_account
+                        .as_ref()
+                        .ok_or(SolanaErrorCode::AccountError)?
+                        .to_account_info()
+                        .try_borrow_data()?
+                        .is_empty()
+                {
+                    msg!(
+                        "Buyer's token associated token account is not initialized. Initializing it..."
+                    );
+
+                    // If the token account doesn't exist, create it
+                    let cpi_accounts = anchor_spl::associated_token::Create {
+                        payer: ctx.accounts.fee_payer.to_account_info(),
+                        associated_token: ctx.accounts.buyer_token_account
+                            .as_ref()
+                            .ok_or(SolanaErrorCode::AccountError)?
+                            .to_account_info(),
+                        authority: ctx.accounts.buyer.to_account_info(),
+                        mint: ctx.accounts.mint_account.to_account_info(),
+                        system_program: ctx.accounts.system_program.to_account_info(),
+                        token_program: ctx.accounts.token_program.to_account_info(),
+                    };
+
+                    let cpi_program = ctx.accounts.associated_token_program.to_account_info();
+                    let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
+
+                    create(cpi_ctx)?;
+                    msg!("Buyer's associated token account has been successfully initialized.");
+                }
+            }
+
             let cpi_accounts = Transfer {
-                from: escrow.to_account_info(),
+                from: ctx.accounts.escrow_token_account
+                    .as_ref()
+                    .ok_or(SolanaErrorCode::AccountError)?
+                    .to_account_info(),
                 to: to_account_info,
-                authority: ctx.accounts.seller.to_account_info(),
+                authority: escrow.to_account_info(),
             };
+
             let cpi_program = ctx.accounts.token_program.to_account_info();
             let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
-            token::transfer(cpi_ctx, escrow.amount)?;
+
+            // Perform the token transfer (with decimals checked)
+            token::transfer(
+                cpi_ctx.with_signer(&[&[b"escrow", order_id.as_bytes(), &[_bump]]]),
+                amount_to_transfer
+            )?;
+            msg!("Transferred tokens to winner");
+            if will_fee_transfer {
+                // Transfer fee tokens from escrow PDA to the fee recipient's associated token account
+                let cpi_accounts_fee = Transfer {
+                    from: ctx.accounts.escrow_token_account
+                        .as_ref()
+                        .ok_or(SolanaErrorCode::AccountError)?
+                        .to_account_info(),
+                    to: ctx.accounts.fee_recipient_token_account
+                        .as_ref()
+                        .ok_or(SolanaErrorCode::AccountError)?
+                        .to_account_info(),
+                    authority: escrow.to_account_info(),
+                };
+
+                let cpi_program2 = ctx.accounts.token_program.to_account_info();
+                let cpi_ctx_fee = CpiContext::new(cpi_program2, cpi_accounts_fee);
+
+                // Perform the token transfer for the fee (with decimals checked)
+                token::transfer(
+                    cpi_ctx_fee.with_signer(&[&[b"escrow", order_id.as_bytes(), &[_bump]]]),
+                    escrow.fee
+                )?;
+            }
         }
 
         escrow.exists = false;
@@ -865,7 +925,7 @@ pub struct Initialize<'info> {
     #[account(
         init,
         payer = fee_payer,
-        space = 8 + 177,
+        space = 8 + 105,
         seeds = [b"escrow_state", seller.key().as_ref()],
         bump
     )]
@@ -1060,16 +1120,18 @@ pub struct ReleaseFunds<'info> {
     pub token_program: Program<'info, Token>,
     /// CHECK: This is safe because the Fee Recipient is validated by the program
     pub mint_account: UncheckedAccount<'info>,
-    #[account(
-        mut,
-    )]
+    #[account(mut)]
     pub escrow_token_account: Option<UncheckedAccount<'info>>,
-    #[account(
-        mut,
-    )]
+    #[account( mut)]
     pub buyer_token_account: Option<UncheckedAccount<'info>>,
     #[account(mut)]
     pub fee_payer: Signer<'info>,
+    /// Associated Token Program for creating token accounts
+    pub associated_token_program: Program<'info, AssociatedToken>,
+    /// System Program (needed to create token accounts)
+    pub system_program: Program<'info, System>,
+    /// Rent sysvar (for rent exemption)
+    pub rent: Sysvar<'info, Rent>,
 }
 
 #[derive(Accounts)]
@@ -1080,21 +1142,24 @@ pub struct CancelEscrow<'info> {
     #[account(mut, seeds = [b"escrow", order_id.as_bytes()], bump)]
     pub escrow: Account<'info, Escrow>,
     pub seller: Signer<'info>,
-    // #[account(mut, constraint = escrow_token_account.owner == TOKEN_PROGRAM_ID)]
-    // pub escrow_token_account: Option<Account<'info, TokenAccount>>,
-    // #[account(mut, constraint = seller_token_account.owner == TOKEN_PROGRAM_ID)]
-    // pub seller_token_account: Option<Account<'info, TokenAccount>>,
+    #[account(mut)]
+    pub fee_payer: Signer<'info>,
+    #[account(mut)]
+    pub escrow_token_account: Option<UncheckedAccount<'info>>,
+    #[account(mut,)]
+    pub escrow_state_token_account: Option<UncheckedAccount<'info>>,
     pub token_program: Program<'info, Token>,
 }
 
 #[derive(Accounts)]
 #[instruction(order_id: String)]
 pub struct OpenDispute<'info> {
-    #[account(mut, seeds = [b"escrow_state", payer.key().as_ref()], bump)]
-    pub escrow_state: Account<'info, EscrowState>,
     #[account(mut, seeds = [b"escrow", order_id.as_bytes()], bump)]
     pub escrow: Account<'info, Escrow>,
+    #[account(mut)]
     pub payer: Signer<'info>,
+    #[account(mut)]
+    pub fee_payer: Signer<'info>,
     // System program is required for PDA derivation
     pub system_program: Program<'info, System>,
 }
@@ -1106,7 +1171,7 @@ pub struct ResolveDispute<'info> {
     pub escrow_state: Account<'info, EscrowState>,
     #[account(mut, seeds = [b"escrow", order_id.as_bytes()], bump)]
     pub escrow: Account<'info, Escrow>,
-    /// CHECK: This is safe because the arbitrator is a trusted party
+    #[account(mut)]
     pub arbitrator: Signer<'info>,
     /// CHECK: This is safe because the seller is known and validated by the program
     #[account(mut)]
@@ -1114,9 +1179,29 @@ pub struct ResolveDispute<'info> {
     /// CHECK: This is safe because the buyer is known and validated by the program
     #[account(mut)]
     pub buyer: AccountInfo<'info>,
-    // System program is required for PDA derivation
-    pub system_program: Program<'info, System>,
+    /// CHECK: This is safe because the Fee Recipient is validated by the program
+    #[account(mut)]
+    pub fee_recipient: AccountInfo<'info>,
+    #[account(mut,)]
+    pub fee_recipient_token_account: Option<UncheckedAccount<'info>>,
+
     pub token_program: Program<'info, Token>,
+    /// CHECK: This is safe because the Fee Recipient is validated by the program
+    pub mint_account: UncheckedAccount<'info>,
+    #[account(mut)]
+    pub escrow_token_account: Option<UncheckedAccount<'info>>,
+    #[account(mut,)]
+    pub buyer_token_account: Option<UncheckedAccount<'info>>,
+    #[account(mut,)]
+    pub seller_token_account: Option<UncheckedAccount<'info>>,
+    #[account(mut)]
+    pub fee_payer: Signer<'info>,
+    /// Associated Token Program for creating token accounts
+    pub associated_token_program: Program<'info, AssociatedToken>,
+    /// System Program (needed to create token accounts)
+    pub system_program: Program<'info, System>,
+    /// Rent sysvar (for rent exemption)
+    pub rent: Sysvar<'info, Rent>,
 }
 
 #[derive(Accounts)]
@@ -1208,9 +1293,6 @@ pub struct EscrowState {
     pub fee_bps: u64,
     pub arbitrator: Pubkey,
     pub fee_recipient: Pubkey,
-    pub fee_discount_nft: Pubkey,
-    pub dispute_fee: u64,
-    pub deployer: Pubkey,
 }
 
 #[account]
@@ -1266,6 +1348,12 @@ pub enum SolanaErrorCode {
     InvalidDisputeInitiator,
     #[msg("You missed to pass one important account")]
     AccountError,
+    #[msg("This order is disputed. You can't release funds.")]
+    Disputed,
+    #[msg("You're not a valid arbitrator.")]
+    InvalidArbitrator,
+    #[msg("You're not a seller or buyer for this order.")]
+    InvalidAuthority,
 }
 
 #[event]
