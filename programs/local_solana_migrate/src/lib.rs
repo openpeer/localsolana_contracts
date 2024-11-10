@@ -900,18 +900,30 @@ pub mod local_solana_migrate {
             **ctx.accounts.escrow_state.to_account_info().try_borrow_mut_lamports()? -= amount;
             **ctx.accounts.seller.to_account_info().try_borrow_mut_lamports()? += amount;
         } else {
-            // if let (Some(seller_token_account), Some(escrow_token_account)) = (
-            //     &ctx.accounts.seller_token_account,
-            //     &ctx.accounts.escrow_token_account,
-            // ) {
             let cpi_accounts = Transfer {
-                from: ctx.accounts.escrow_state.to_account_info(),
-                to: ctx.accounts.seller.to_account_info(),
-                authority: ctx.accounts.seller.to_account_info(),
+                from: ctx.accounts.escrow_state_token_account
+                    .as_ref()
+                    .ok_or(SolanaErrorCode::AccountError)?
+                    .to_account_info(),
+                to: ctx.accounts.seller_token_account.as_ref()
+                .ok_or(SolanaErrorCode::AccountError)?
+                .to_account_info(),
+                authority: ctx.accounts.escrow_state.to_account_info(),
             };
-            let cpi_program = ctx.accounts.token_program.to_account_info();
-            let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
-            token::transfer(cpi_ctx, amount)?;
+            let seller_key = ctx.accounts.seller.key();
+            let escrow_state_seeds = &[
+                b"escrow_state",
+                seller_key.as_ref(),
+                &[ctx.bumps.escrow_state],
+            ];
+            let seeds: &[&[&[u8]]] = &[escrow_state_seeds];
+            let cpi_ctx = CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                cpi_accounts,
+                seeds
+            );
+            msg!("Sending: {}", amount);
+            token::transfer(cpi_ctx, amount )?;
             //}
         }
 
@@ -1279,11 +1291,16 @@ pub struct WithdrawBalance<'info> {
     pub escrow_state: Account<'info, EscrowState>,
     #[account(mut)]
     pub seller: Signer<'info>,
-    // #[account(mut, constraint = escrow_token_account.owner == TOKEN_PROGRAM_ID)]
-    // pub escrow_token_account: Option<Account<'info, TokenAccount>>,
     pub token_program: Program<'info, Token>,
-    // #[account(mut, constraint = seller_token_account.owner == TOKEN_PROGRAM_ID)]
-    // pub seller_token_account: Option<Account<'info, TokenAccount>>,
+    /// CHECK: This is safe because the Fee Recipient is validated by the program
+    pub mint_account: UncheckedAccount<'info>,
+    #[account(mut)]
+    pub escrow_state_token_account: Option<UncheckedAccount<'info>>,
+    #[account(mut)]
+    pub seller_token_account: Option<UncheckedAccount<'info>>,
+
+    #[account(mut)]
+    pub fee_payer: Signer<'info>,
 }
 
 #[account]
